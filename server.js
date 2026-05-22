@@ -4,11 +4,8 @@ const { Server } = require('socket.io');
 const path = require('path');
 
 const app = express();
-
-// Serve static files from public folder (works on both local and Render)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Health check endpoint for Render
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', users: users.size, messages: messages.length });
 });
@@ -27,7 +24,11 @@ const messages = [];
 function broadcastRoomUsers(room) {
   const list = [];
   users.forEach((u, id) => {
-    if (u.room === room) list.push({ userId: u.userId, socketId: id });
+    if (u.room === room) list.push({ 
+      userId: u.userId, 
+      socketId: id,
+      theme: u.theme
+    });
   });
   io.to(room).emit('room-users', list);
 }
@@ -36,8 +37,8 @@ io.on('connection', (socket) => {
   console.log('Connected:', socket.id.substring(0, 8));
 
   socket.on('join', (data) => {
-    const { userId, room } = data;
-    users.set(socket.id, { userId, room });
+    const { userId, room, theme } = data;
+    users.set(socket.id, { userId, room, theme });
     socket.join(room);
     const roomMessages = messages.filter(m => m.room === room);
     socket.emit('message-history', roomMessages);
@@ -52,6 +53,7 @@ io.on('connection', (socket) => {
       room: user.room,
       userId: user.userId,
       text: data.text,
+      theme: user.theme,
       createdAt: Date.now(),
     };
     messages.push(msg);

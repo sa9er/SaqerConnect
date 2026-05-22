@@ -15,7 +15,7 @@
     .message { max-width: 80%; padding: 10px 14px; border-radius: 16px; margin-bottom: 8px; word-wrap: break-word; }
     .mine { align-self: flex-end; margin-left: auto; border-bottom-right-radius: 4px; }
     .theirs { align-self: flex-start; border-bottom-left-radius: 4px; }
-    .their-user { font-size: 11px; margin-bottom: 2px; font-weight: 600; opacity: 0.8; }
+    .their-user { font-size: 11px; margin-bottom: 2px; font-weight: 600; }
     .input-bar { display: flex; padding: 12px; border-top: 1px solid #16213e; gap: 8px; }
     input { flex: 1; background: #16213e; border: none; border-radius: 20px; padding: 10px 16px; color: #fff; font-size: 16px; outline: none; }
     button { background: #e94560; border: none; border-radius: 20px; padding: 10px 20px; color: #fff; font-weight: bold; font-size: 16px; cursor: pointer; }
@@ -27,7 +27,6 @@
     .empty { text-align: center; padding: 40px; color: #666; }
     .users-bar { display: flex; gap: 6px; padding: 8px 16px; overflow-x: auto; border-bottom: 1px solid #16213e; }
     .user-pill { padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; white-space: nowrap; }
-    .typing { font-size: 12px; color: #888; padding: 0 16px 4px; font-style: italic; }
   </style>
 </head>
 <body>
@@ -36,17 +35,19 @@
   <script>
     const SERVER = window.location.origin;
     let socket = null;
-    let myUserId = localStorage.getItem('fc_user');
-    let myTheme = null;
+    let userId = localStorage.getItem('fc_user') || '';
+    let userTheme = localStorage.getItem('fc_theme') || '';
     
     const app = document.getElementById('app');
+    
+    const themeColors = ['#e94560', '#4ecca3', '#f0a500', '#4a69bd', '#6c5ce7', '#00b894', '#e17055', '#0984e3'];
     
     function showJoin() {
       app.innerHTML = `
         <div class="join">
           <h1>FamilyConnect</h1>
           <p>Your private family space</p>
-          <input id="name" placeholder="Your name (e.g. Mom)" value="${myUserId || ''}">
+          <input id="name" placeholder="Your name (e.g. Mom)" value="${userId}">
           <input id="room" placeholder="Room name (e.g. family)" value="family">
           <button onclick="join()">Join Room</button>
         </div>
@@ -60,26 +61,21 @@
       const name = nameInput.value.trim();
       const room = roomInput.value.trim();
       
-      if (!name) {
-        nameInput.style.border = '1px solid #e94560';
-        return;
-      }
-      if (!room) {
-        roomInput.style.border = '1px solid #e94560';
-        return;
-      }
+      if (!name) { nameInput.style.border = '1px solid #e94560'; return; }
+      if (!room) { roomInput.style.border = '1px solid #e94560'; return; }
       
-      myUserId = name;
-      localStorage.setItem('fc_user', myUserId);
+      userId = name;
+      localStorage.setItem('fc_user', userId);
+      
+      if (!userTheme) {
+        userTheme = themeColors[Math.floor(Math.random() * themeColors.length)];
+        localStorage.setItem('fc_theme', userTheme);
+      }
       
       socket = io(SERVER, { transports: ['websocket', 'polling'] });
       
       socket.on('connect', () => {
-        socket.emit('join', { userId: myUserId, room });
-      });
-      
-      socket.on('your-theme', (theme) => {
-        myTheme = theme;
+        socket.emit('join', { userId, room, theme: userTheme });
       });
       
       socket.on('message-history', (msgs) => {
@@ -120,7 +116,7 @@
       const bar = document.getElementById('usersBar');
       if (!bar) return;
       bar.innerHTML = list.map(u => 
-        `<span class="user-pill" style="background:${u.theme}33; color:${u.theme}; border:1px solid ${u.theme}55;">${u.userId}</span>`
+        `<span class="user-pill" style="background:${u.theme || '#e94560'}22; color:${u.theme || '#e94560'}; border:1px solid ${u.theme || '#e94560'}44;">${u.userId}</span>`
       ).join('');
     }
     
@@ -129,18 +125,21 @@
       if (!div) return;
       const empty = div.querySelector('.empty');
       if (empty) empty.remove();
-      
-      const isMine = msg.userId === myUserId;
       const el = document.createElement('div');
+      const isMine = msg.userId === userId;
       el.className = 'message ' + (isMine ? 'mine' : 'theirs');
-      el.style.backgroundColor = isMine ? myTheme : (msg.theme || '#16213e');
-      
-      if (!isMine) {
-        el.innerHTML = `<div class="their-user" style="color:${msg.theme || '#888'}">${msg.userId}</div>${msg.text}`;
+      if (isMine) {
+        el.style.background = userTheme;
       } else {
-        el.innerHTML = msg.text;
+        el.style.background = '#16213e';
+        const userName = document.createElement('div');
+        userName.className = 'their-user';
+        userName.textContent = msg.userId;
+        userName.style.color = msg.theme || '#888';
+        el.appendChild(userName);
       }
-      
+      const textNode = document.createTextNode(msg.text);
+      el.appendChild(textNode);
       div.appendChild(el);
       div.scrollTop = div.scrollHeight;
     }
