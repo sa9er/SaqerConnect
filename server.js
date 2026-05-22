@@ -1,10 +1,14 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const path = require('path');
 
 const app = express();
-app.use(express.static('/data/data/com.termux/files/home/family-server/public'));
 
+// Serve static files from public folder (works on both local and Render)
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Health check endpoint for Render
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', users: users.size, messages: messages.length });
 });
@@ -20,32 +24,10 @@ const io = new Server(server, {
 const users = new Map();
 const messages = [];
 
-// Color themes for users
-const THEMES = [
-  '#e94560', '#4ecca3', '#f4d03f', '#5dade2', '#af7ac5',
-  '#e67e22', '#1abc9c', '#e74c3c', '#3498db', '#9b59b6',
-  '#f39c12', '#2ecc71', '#e91e63', '#00bcd4', '#ff5722'
-];
-
-function getThemeForUser(userId) {
-  let hash = 0;
-  for (let i = 0; i < userId.length; i++) {
-    hash = userId.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const index = Math.abs(hash) % THEMES.length;
-  return THEMES[index];
-}
-
 function broadcastRoomUsers(room) {
   const list = [];
   users.forEach((u, id) => {
-    if (u.room === room) {
-      list.push({
-        userId: u.userId,
-        socketId: id,
-        theme: u.theme
-      });
-    }
+    if (u.room === room) list.push({ userId: u.userId, socketId: id });
   });
   io.to(room).emit('room-users', list);
 }
@@ -55,12 +37,10 @@ io.on('connection', (socket) => {
 
   socket.on('join', (data) => {
     const { userId, room } = data;
-    const theme = getThemeForUser(userId);
-    users.set(socket.id, { userId, room, theme });
+    users.set(socket.id, { userId, room });
     socket.join(room);
     const roomMessages = messages.filter(m => m.room === room);
     socket.emit('message-history', roomMessages);
-    socket.emit('your-theme', theme);
     broadcastRoomUsers(room);
   });
 
@@ -72,7 +52,6 @@ io.on('connection', (socket) => {
       room: user.room,
       userId: user.userId,
       text: data.text,
-      theme: user.theme,
       createdAt: Date.now(),
     };
     messages.push(msg);
@@ -83,10 +62,7 @@ io.on('connection', (socket) => {
   socket.on('call-user', (data) => {
     const user = users.get(socket.id);
     if (!user) return;
-    socket.to(user.room).emit('incoming-call', {
-      from: user.userId,
-      callType: data.callType
-    });
+    socket.to(user.room).emit('incoming-call', { from: user.userId, callType: data.callType });
   });
 
   socket.on('signal', (data) => {
