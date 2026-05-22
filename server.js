@@ -6,11 +6,21 @@ const path = require('path');
 const app = express();
 app.use(express.static('/data/data/com.termux/files/home/family-test'));
 
+// Health check endpoint for Render
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', users: users.size, messages: messages.length });
+});
+
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const io = new Server(server, {
+  cors: { origin: '*' },
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  transports: ['websocket', 'polling'],
+});
 
 const users = new Map();
-const messages = []; // Simple in-memory store
+const messages = [];
 
 function broadcastRoomUsers(room) {
   const list = [];
@@ -27,11 +37,8 @@ io.on('connection', (socket) => {
     const { userId, room } = data;
     users.set(socket.id, { userId, room });
     socket.join(room);
-    
-    // Send message history
     const roomMessages = messages.filter(m => m.room === room);
     socket.emit('message-history', roomMessages);
-    
     broadcastRoomUsers(room);
   });
 
@@ -46,7 +53,7 @@ io.on('connection', (socket) => {
       createdAt: Date.now(),
     };
     messages.push(msg);
-    if (messages.length > 500) messages.shift(); // Keep last 500
+    if (messages.length > 500) messages.shift();
     io.to(user.room).emit('new-message', msg);
   });
 
@@ -67,4 +74,5 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(3000, '0.0.0.0', () => console.log('Server on 3000'));
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, '0.0.0.0', () => console.log(`Server on ${PORT}`));
