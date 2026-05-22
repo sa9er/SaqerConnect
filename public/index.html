@@ -13,9 +13,9 @@
     .header p { color: #888; font-size: 14px; margin-top: 4px; }
     .messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; }
     .message { max-width: 80%; padding: 10px 14px; border-radius: 16px; margin-bottom: 8px; word-wrap: break-word; }
-    .mine { align-self: flex-end; background: #e94560; margin-left: auto; border-bottom-right-radius: 4px; }
-    .theirs { align-self: flex-start; background: #16213e; border-bottom-left-radius: 4px; }
-    .their-user { color: #888; font-size: 11px; margin-bottom: 2px; }
+    .mine { align-self: flex-end; margin-left: auto; border-bottom-right-radius: 4px; }
+    .theirs { align-self: flex-start; border-bottom-left-radius: 4px; }
+    .their-user { font-size: 11px; margin-bottom: 2px; font-weight: 600; opacity: 0.8; }
     .input-bar { display: flex; padding: 12px; border-top: 1px solid #16213e; gap: 8px; }
     input { flex: 1; background: #16213e; border: none; border-radius: 20px; padding: 10px 16px; color: #fff; font-size: 16px; outline: none; }
     button { background: #e94560; border: none; border-radius: 20px; padding: 10px 20px; color: #fff; font-weight: bold; font-size: 16px; cursor: pointer; }
@@ -25,6 +25,9 @@
     .join input { margin-bottom: 12px; width: 100%; padding: 14px 16px; }
     .join button { width: 100%; padding: 14px; border-radius: 12px; }
     .empty { text-align: center; padding: 40px; color: #666; }
+    .users-bar { display: flex; gap: 6px; padding: 8px 16px; overflow-x: auto; border-bottom: 1px solid #16213e; }
+    .user-pill { padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+    .typing { font-size: 12px; color: #888; padding: 0 16px 4px; font-style: italic; }
   </style>
 </head>
 <body>
@@ -33,8 +36,8 @@
   <script>
     const SERVER = window.location.origin;
     let socket = null;
-    let userId = localStorage.getItem('fc_user') || 'user-' + Math.random().toString(36).substr(2, 9);
-    localStorage.setItem('fc_user', userId);
+    let myUserId = localStorage.getItem('fc_user');
+    let myTheme = null;
     
     const app = document.getElementById('app');
     
@@ -43,20 +46,40 @@
         <div class="join">
           <h1>FamilyConnect</h1>
           <p>Your private family space</p>
+          <input id="name" placeholder="Your name (e.g. Mom)" value="${myUserId || ''}">
           <input id="room" placeholder="Room name (e.g. family)" value="family">
           <button onclick="join()">Join Room</button>
         </div>
       `;
+      document.getElementById('name').focus();
     }
     
     function join() {
-      const room = document.getElementById('room').value.trim();
-      if (!room) return;
+      const nameInput = document.getElementById('name');
+      const roomInput = document.getElementById('room');
+      const name = nameInput.value.trim();
+      const room = roomInput.value.trim();
+      
+      if (!name) {
+        nameInput.style.border = '1px solid #e94560';
+        return;
+      }
+      if (!room) {
+        roomInput.style.border = '1px solid #e94560';
+        return;
+      }
+      
+      myUserId = name;
+      localStorage.setItem('fc_user', myUserId);
       
       socket = io(SERVER, { transports: ['websocket', 'polling'] });
       
       socket.on('connect', () => {
-        socket.emit('join', { userId, room });
+        socket.emit('join', { userId: myUserId, room });
+      });
+      
+      socket.on('your-theme', (theme) => {
+        myTheme = theme;
       });
       
       socket.on('message-history', (msgs) => {
@@ -66,6 +89,10 @@
       socket.on('new-message', (msg) => {
         addMessage(msg);
       });
+      
+      socket.on('room-users', (list) => {
+        updateUsersBar(list);
+      });
     }
     
     function showChat(room, history) {
@@ -74,6 +101,7 @@
           <h1>Messages</h1>
           <p>Room: ${room}</p>
         </div>
+        <div class="users-bar" id="usersBar"></div>
         <div class="messages" id="msgs"></div>
         <div class="input-bar">
           <input id="txt" placeholder="Type a message..." onkeypress="if(event.key==='Enter')send()">
@@ -88,14 +116,31 @@
       document.getElementById('txt').focus();
     }
     
+    function updateUsersBar(list) {
+      const bar = document.getElementById('usersBar');
+      if (!bar) return;
+      bar.innerHTML = list.map(u => 
+        `<span class="user-pill" style="background:${u.theme}33; color:${u.theme}; border:1px solid ${u.theme}55;">${u.userId}</span>`
+      ).join('');
+    }
+    
     function addMessage(msg) {
       const div = document.getElementById('msgs');
       if (!div) return;
       const empty = div.querySelector('.empty');
       if (empty) empty.remove();
+      
+      const isMine = msg.userId === myUserId;
       const el = document.createElement('div');
-      el.className = 'message ' + (msg.userId === userId ? 'mine' : 'theirs');
-      el.innerHTML = (msg.userId !== userId ? `<div class="their-user">${msg.userId}</div>` : '') + msg.text;
+      el.className = 'message ' + (isMine ? 'mine' : 'theirs');
+      el.style.backgroundColor = isMine ? myTheme : (msg.theme || '#16213e');
+      
+      if (!isMine) {
+        el.innerHTML = `<div class="their-user" style="color:${msg.theme || '#888'}">${msg.userId}</div>${msg.text}`;
+      } else {
+        el.innerHTML = msg.text;
+      }
+      
       div.appendChild(el);
       div.scrollTop = div.scrollHeight;
     }
