@@ -34,10 +34,10 @@ async function startTest() {
     });
     status.textContent += '\nMicrophone granted!';
     
-    // Capture context
+    // Capture context - use 256 (power of 2) instead of 320
     audioCtx = new AudioContext({ sampleRate: 16000 });
     source = audioCtx.createMediaStreamSource(micStream);
-    processor = audioCtx.createScriptProcessor(320, 1, 1);
+    processor = audioCtx.createScriptProcessor(256, 1, 1);
     
     // Playback context
     playbackCtx = new AudioContext({ sampleRate: 16000 });
