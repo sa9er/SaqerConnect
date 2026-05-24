@@ -6,124 +6,50 @@ const path = require('path');
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', users: users.size, messages: messages.length });
-});
-
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: '*' },
-  pingTimeout: 60000,
-  pingInterval: 25000,
-  transports: ['websocket', 'polling'],
-});
+const io = new Server(server, { cors: { origin: '*' } });
 
-const users = new Map();
-const messages = [];
-let audioPacketCount = 0;
-
-function broadcastRoomUsers(room) {
-  const list = [];
-  users.forEach((u, id) => {
-    if (u.room === room) list.push({ userId: u.userId, socketId: id, theme: u.theme });
-  });
-  io.to(room).emit('room-users', list);
-}
+// Rooms: { roomName: [socket1, socket2, ...] }
+const rooms = new Map();
 
 io.on('connection', (socket) => {
   console.log('Connected:', socket.id.substring(0, 8));
 
-  socket.on('join', (data) => {
-    const { userId, room } = data;
-    const theme = getThemeForUser(userId);
-    users.set(socket.id, { userId, room, theme });
-    socket.join(room);
-    const roomMessages = messages.filter(m => m.room === room);
-    socket.emit('message-history', roomMessages);
-    broadcastRoomUsers(room);
-  });
-
-  socket.on('get-users', () => {
-    const user = users.get(socket.id);
-    if (user) broadcastRoomUsers(user.room);
-  });
-
-  socket.on('send-message', (data) => {
-    const user = users.get(socket.id);
-    if (!user) return;
-    const msg = {
-      id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-      room: user.room,
-      userId: user.userId,
-      text: data.text,
-      theme: user.theme,
-      createdAt: Date.now(),
-    };
-    messages.push(msg);
-    if (messages.length > 500) messages.shift();
-    io.to(user.room).emit('new-message', msg);
-  });
-
-  socket.on('call-user', (data) => {
-    const user = users.get(socket.id);
-    if (!user) return;
-    socket.to(user.room).emit('incoming-call', { from: user.userId, callType: data.callType });
-  });
-
-  socket.on('call-rejected', (data) => {
-    if (data && data.to) io.to(data.to).emit('call-rejected');
-  });
-
-  socket.on('call-ended', () => {
-    const user = users.get(socket.id);
-    if (user) socket.to(user.room).emit('call-ended');
-  });
-
-  socket.on('signal', (data) => {
-    io.to(data.to).emit('signal', { from: socket.id, signal: data.signal });
-  });
-
-  // Relay audio data with logging
-  socket.on('audio-data', (data) => {
-    const user = users.get(socket.id);
-    if (!user) return;
+  socket.on('join-room', (roomId) => {
+    socket.join(roomId);
+    socket.roomId = roomId;
     
-    audioPacketCount++;
-    if (audioPacketCount % 100 === 0) {
-      console.log(`Audio packets relayed: ${audioPacketCount}`);
+    const clients = io.sockets.adapter.rooms.get(roomId);
+    const count = clients ? clients.size : 0;
+    
+    console.log(`Room ${roomId}: ${count} users`);
+    socket.to(roomId).emit('user-joined', { userId: socket.id, count });
+    
+    // If 2+ people, notify they can call
+    if (count >= 2) {
+      io.to(roomId).emit('ready-to-call', { count });
     }
-    
-    // Log first few packets to verify format
-    if (audioPacketCount <= 5) {
-      console.log('Audio packet from', user.userId, 'type:', data.type, 'len:', data.data ? data.data.length : 'no data');
-    }
-    
-    socket.to(user.room).emit('audio-data', data);
+  });
+
+  // WebRTC signaling
+  socket.on('offer', (data) => {
+    socket.to(data.roomId).emit('offer', { offer: data.offer, from: socket.id });
+  });
+
+  socket.on('answer', (data) => {
+    socket.to(data.roomId).emit('answer', { answer: data.answer, from: socket.id });
+  });
+
+  socket.on('ice-candidate', (data) => {
+    socket.to(data.roomId).emit('ice-candidate', { candidate: data.candidate, from: socket.id });
   });
 
   socket.on('disconnect', () => {
-    const user = users.get(socket.id);
-    users.delete(socket.id);
-    if (user) {
-      socket.to(user.room).emit('call-ended');
-      broadcastRoomUsers(user.room);
+    if (socket.roomId) {
+      socket.to(socket.roomId).emit('user-left', { userId: socket.id });
     }
   });
 });
 
-const THEMES = [
-  '#e94560', '#4ecca3', '#f4d03f', '#5dade2', '#af7ac5',
-  '#e67e22', '#1abc9c', '#e74c3c', '#3498db', '#9b59b6',
-  '#f39c12', '#2ecc71', '#e91e63', '#00bcd4', '#ff5722'
-];
-
-function getThemeForUser(userId) {
-  let hash = 0;
-  for (let i = 0; i < userId.length; i++) {
-    hash = userId.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return THEMES[Math.abs(hash) % THEMES.length];
-}
-
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, '0.0.0.0', () => console.log(`Server on ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`Signaling server on ${PORT}`));

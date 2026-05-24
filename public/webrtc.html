@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>FamilyConnect - Secure Call</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1a2e;color:#fff;font-family:sans-serif;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px}
+#status{background:#16213e;padding:20px;border-radius:12px;max-width:90%;text-align:center}
+button{background:#e94560;border:none;padding:15px 40px;border-radius:25px;color:#fff;font-size:18px;cursor:pointer}
+button:disabled{background:#333;color:#666}
+#videos{position:fixed;top:0;left:0;width:100%;height:100%;display:none;z-index:100}
+#localVideo{position:absolute;bottom:20px;right:20px;width:120px;height:160px;border-radius:12px;object-fit:cover;border:2px solid #e94560}
+#remoteVideo{width:100%;height:100%;object-fit:cover}
+#endCall{position:absolute;top:20px;right:20px;background:#e94560;border:none;width:60px;height:60px;border-radius:50%;font-size:24px;z-index:101}
+</style>
+</head>
+<body>
+<div id="status">Connecting to server...</div>
+<button id="callBtn" disabled>Waiting for someone...</button>
+
+<div id="videos">
+  <video id="remoteVideo" autoplay playsinline></video>
+  <video id="localVideo" autoplay playsinline muted></video>
+  <button id="endCall" onclick="endCall()">🔴</button>
+</div>
+
+<script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+<script>
+const ROOM = 'family-room';
+const STATUS = document.getElementById('status');
+const CALL_BTN = document.getElementById('callBtn');
+const VIDEOS = document.getElementById('videos');
+
+let socket, localStream, remoteStream, peerConnection;
+let isCaller = false;
+
+const servers = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' }
+  ]
+};
+
+async function init() {
+  socket = io();
+  
+  socket.on('connect', () => {
+    STATUS.textContent = 'Connected! Joining room...';
+    socket.emit('join-room', ROOM);
+  });
+  
+  socket.on('user-joined', (data) => {
+    STATUS.textContent = `${data.count} people in room. Ready to call!`;
+    CALL_BTN.disabled = false;
+    CALL_BTN.textContent = '📞 Start Call';
+    CALL_BTN.onclick = startCall;
+  });
+  
+  socket.on('ready-to-call', () => {
+    STATUS.textContent = 'Someone is here! Tap to call.';
+    CALL_BTN.disabled = false;
+    CALL_BTN.textContent = '📞 Start Call';
+    CALL_BTN.onclick = startCall;
+  });
+  
+  socket.on('offer', async (data) => {
+    isCaller = false;
+    STATUS.textContent = 'Incoming call...';
+    
+    await setupPeerConnection();
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+    socket.emit('answer', { roomId: ROOM, answer });
+    
+    STATUS.textContent = 'Call connected!';
+    showVideos();
+  });
+  
+  socket.on('answer', async (data) => {
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+    STATUS.textContent = 'Call connected!';
+    showVideos();
+  });
+  
+  socket.on('ice-candidate', async (data) => {
+    try {
+      await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+    } catch (e) {
+      console.error('ICE error:', e);
+    }
+  });
+  
+  socket.on('user-left', () => {
+    STATUS.textContent = 'Other person left.';
+    endCall();
+  });
+}
+
+async function startCall() {
+  isCaller = true;
+  STATUS.textContent = 'Starting call...';
+  CALL_BTN.disabled = true;
+  
+  await setupPeerConnection();
+  
+  const offer = await peerConnection.createOffer();
+  await peerConnection.setLocalDescription(offer);
+  socket.emit('offer', { roomId: ROOM, offer });
+  
+  STATUS.textContent = 'Calling... waiting for answer';
+}
+
+async function setupPeerConnection() {
+  localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  document.getElementById('localVideo').srcObject = localStream;
+  
+  peerConnection = new RTCPeerConnection(servers);
+  
+  localStream.getTracks().forEach(track => {
+    peerConnection.addTrack(track, localStream);
+  });
+  
+  peerConnection.ontrack = (event) => {
+    remoteStream = event.streams[0];
+    document.getElementById('remoteVideo').srcObject = remoteStream;
+  };
+  
+  peerConnection.onicecandidate = (event) => {
+    if (event.candidate) {
+      socket.emit('ice-candidate', { roomId: ROOM, candidate: event.candidate });
+    }
+  };
+}
+
+function showVideos() {
+  document.body.style.background = '#000';
+  VIDEOS.style.display = 'block';
+}
+
+function endCall() {
+  if (peerConnection) peerConnection.close();
+  if (localStream) localStream.getTracks().forEach(t => t.stop());
+  peerConnection = null;
+  localStream = null;
+  remoteStream = null;
+  VIDEOS.style.display = 'none';
+  document.body.style.background = '#1a1a2e';
+  STATUS.textContent = 'Call ended. Tap to call again.';
+  CALL_BTN.disabled = false;
+  CALL_BTN.textContent = '📞 Start Call';
+}
+
+init();
+</script>
+</body>
+</html>
