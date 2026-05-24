@@ -39,7 +39,6 @@
   <script>
     const SERVER = window.location.origin;
     let socket, pc, localStream, isMuted = false, seconds = 0, timer = null, myId;
-    const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
 
     function join() {
       myId = document.getElementById('name').value.trim();
@@ -50,8 +49,6 @@
       socket.on('room-users', updateUsers);
       socket.on('signal', handleSignal);
       socket.on('incoming-call', handleIncomingCall);
-      socket.on('user-joined', () => {});
-      socket.on('user-left', () => {});
       showRoom();
     }
 
@@ -69,15 +66,21 @@
     function updateUsers(list) {
       const others = list.filter(u => u.userId !== myId);
       const el = document.getElementById('users');
-      if (el) el.textContent = others.length > 0 ? others.map(u => u.userId).join(', ') : 'No one else here';
+      if (el) el.textContent = others.length > 0 ? '👤 ' + others.map(u => u.userId).join(', ') : 'No one else';
     }
 
     async function startCall() {
       document.getElementById('status').textContent = 'Calling...';
       document.getElementById('callBtn').style.display = 'none';
       
-      await startMedia();
-      pc = new RTCPeerConnection({ iceServers });
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      } catch(e) {
+        document.getElementById('status').textContent = '⚠️ Mic denied';
+        return;
+      }
+      
+      pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
       localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
       
       pc.onicecandidate = e => {
@@ -96,8 +99,14 @@
       document.getElementById('status').textContent = '📞 ' + data.from;
       document.getElementById('callBtn').style.display = 'none';
       
-      await startMedia();
-      pc = new RTCPeerConnection({ iceServers });
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      } catch(e) {
+        document.getElementById('status').textContent = '⚠️ Mic denied';
+        return;
+      }
+      
+      pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
       localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
       
       pc.onicecandidate = e => {
@@ -107,15 +116,26 @@
       pc.ontrack = e => onRemoteTrack(e);
     }
 
-    async function startMedia() {
-      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    }
-
     function onRemoteTrack(e) {
       document.getElementById('status').textContent = '✅ Connected';
       const audio = new Audio();
       audio.srcObject = e.streams[0];
-      audio.play();
+      audio.autoplay = true;
+      audio.playsInline = true;
+      
+      // Force play on mobile
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {
+          // If autoplay blocked, show a button
+          const btn = document.createElement('button');
+          btn.textContent = '🔊 Tap to hear';
+          btn.style.cssText = 'background:#4ecca3;color:#fff;border:none;padding:10px 20px;border-radius:8px;margin-top:10px;';
+          btn.onclick = () => audio.play();
+          document.getElementById('status').after(btn);
+        });
+      }
+      
       startTimer();
       showControls();
     }
