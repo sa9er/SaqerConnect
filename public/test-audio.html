@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Audio Test</title>
+<style>
+body{background:#1a1a2e;color:#fff;font-family:sans-serif;padding:20px}
+button{background:#e94560;border:none;border-radius:12px;padding:15px 30px;color:#fff;font-size:18px;margin:10px 0}
+#status{color:#0f0;font-family:monospace;white-space:pre-wrap;margin:20px 0;font-size:14px}
+#meter{width:100%;height:30px;background:#333;border-radius:15px;overflow:hidden;margin:20px 0}
+#level{height:100%;width:0%;background:#4ecca3;transition:width 0.1s}
+</style>
+</head>
+<body>
+<h1>🎤 Audio Loopback Test</h1>
+<p>This tests if your browser can capture and play audio.</p>
+<button onclick="startTest()">Start Test</button>
+<button onclick="stopTest()">Stop Test</button>
+<div id="meter"><div id="level"></div></div>
+<div id="status">Click Start Test</div>
+
+<script>
+let audioCtx, micStream, source, processor, playbackCtx;
+let isRunning = false;
+
+async function startTest() {
+  const status = document.getElementById('status');
+  try {
+    status.textContent = 'Requesting microphone...';
+    micStream = await navigator.mediaDevices.getUserMedia({ 
+      audio: { sampleRate: 16000, channelCount: 1, echoCancellation: false },
+      video: false 
+    });
+    status.textContent += '\nMicrophone granted!';
+    
+    // Capture context
+    audioCtx = new AudioContext({ sampleRate: 16000 });
+    source = audioCtx.createMediaStreamSource(micStream);
+    processor = audioCtx.createScriptProcessor(320, 1, 1);
+    
+    // Playback context
+    playbackCtx = new AudioContext({ sampleRate: 16000 });
+    
+    let packetCount = 0;
+    processor.onaudioprocess = (e) => {
+      const input = e.inputBuffer.getChannelData(0);
+      
+      // Show audio level
+      let sum = 0;
+      for (let i = 0; i < input.length; i++) sum += Math.abs(input[i]);
+      const avg = sum / input.length;
+      document.getElementById('level').style.width = Math.min(100, avg * 500) + '%';
+      
+      // Convert to int16
+      const int16 = new Int16Array(input.length);
+      for (let i = 0; i < input.length; i++) {
+        int16[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
+      }
+      
+      // Play back immediately (loopback)
+      const buffer = playbackCtx.createBuffer(1, int16.length, 16000);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < int16.length; i++) data[i] = int16[i] / 32768;
+      
+      const src = playbackCtx.createBufferSource();
+      src.buffer = buffer;
+      src.connect(playbackCtx.destination);
+      src.start();
+      
+      packetCount++;
+      if (packetCount % 50 === 0) {
+        status.textContent = `Running...\\nPackets: ${packetCount}\\nAudio level: ${(avg * 100).toFixed(1)}%\\n\\nYou should hear your voice echoed back!`;
+      }
+    };
+    
+    source.connect(processor);
+    processor.connect(audioCtx.destination);
+    isRunning = true;
+    status.textContent = 'Test running!\\nSpeak now - you should hear yourself.';
+    
+  } catch (err) {
+    status.textContent = 'ERROR: ' + err.name + '\\n' + err.message;
+    document.getElementById('level').style.background = '#e94560';
+  }
+}
+
+function stopTest() {
+  if (processor) { processor.onaudioprocess = null; processor.disconnect(); }
+  if (source) source.disconnect();
+  if (micStream) micStream.getTracks().forEach(t => t.stop());
+  if (audioCtx) audioCtx.close();
+  if (playbackCtx) playbackCtx.close();
+  isRunning = false;
+  document.getElementById('status').textContent = 'Stopped. Click Start Test to try again.';
+  document.getElementById('level').style.width = '0%';
+}
+</script>
+</body>
+</html>
