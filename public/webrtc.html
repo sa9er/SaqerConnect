@@ -1,159 +1,164 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>FamilyConnect - Secure Call</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#1a1a2e;color:#fff;font-family:sans-serif;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px}
-#status{background:#16213e;padding:20px;border-radius:12px;max-width:90%;text-align:center}
-button{background:#e94560;border:none;padding:15px 40px;border-radius:25px;color:#fff;font-size:18px;cursor:pointer}
-button:disabled{background:#333;color:#666}
-#videos{position:fixed;top:0;left:0;width:100%;height:100%;display:none;z-index:100}
-#localVideo{position:absolute;bottom:20px;right:20px;width:120px;height:160px;border-radius:12px;object-fit:cover;border:2px solid #e94560}
-#remoteVideo{width:100%;height:100%;object-fit:cover}
-#endCall{position:absolute;top:20px;right:20px;background:#e94560;border:none;width:60px;height:60px;border-radius:50%;font-size:24px;z-index:101}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>FamilyConnect Call</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { background:#1a1a2e; color:#fff; font-family:-apple-system, sans-serif; }
+        #app { max-width:500px; margin:0 auto; min-height:100vh; display:flex; flex-direction:column; }
+        .join { padding:40px 20px; text-align:center; flex:1; display:flex; flex-direction:column; justify-content:center; }
+        .join h1 { color:#e94560; font-size:28px; margin-bottom:8px; }
+        .join p { color:#888; margin-bottom:32px; }
+        .join input { width:100%; padding:14px; background:#16213e; border:none; border-radius:12px; color:#fff; font-size:16px; margin-bottom:12px; }
+        .join button { width:100%; padding:14px; border-radius:12px; background:#e94560; border:none; color:#fff; font-weight:bold; font-size:18px; cursor:pointer; }
+        .call { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:30px; }
+        .avatar { width:80px; height:80px; border-radius:40px; background:#333; display:flex; align-items:center; justify-content:center; font-size:36px; margin-bottom:20px; }
+        .status { color:#4ecca3; margin-bottom:8px; font-size:18px; }
+        .timer { font-size:28px; margin:12px 0; }
+        .controls { display:flex; gap:20px; margin-top:30px; }
+        .btn { width:60px; height:60px; border-radius:30px; border:none; font-size:20px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+        .end { background:#e94560; width:80px; height:80px; border-radius:40px; }
+        .mute { background:#333; }
+        .hidden { display:none; }
+    </style>
 </head>
 <body>
-<div id="status">Connecting to server...</div>
-<button id="callBtn" disabled>Waiting for someone...</button>
+    <div id="app"></div>
 
-<div id="videos">
-  <video id="remoteVideo" autoplay playsinline></video>
-  <video id="localVideo" autoplay playsinline muted></video>
-  <button id="endCall" onclick="endCall()">🔴</button>
-</div>
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <script>
+        const SERVER = window.location.origin;
+        let socket, userId, userTheme, pc, localStream;
+        let isMuted = false, callTimer, seconds = 0;
+        const themes = ['#e94560','#4ecca3','#f0a500','#4a69bd','#6c5ce7','#00b894'];
+        const app = document.getElementById('app');
 
-<script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
-<script>
-const ROOM = 'family-room';
-const STATUS = document.getElementById('status');
-const CALL_BTN = document.getElementById('callBtn');
-const VIDEOS = document.getElementById('videos');
+        function showJoin() {
+            userId = localStorage.getItem('fc_user') || '';
+            userTheme = localStorage.getItem('fc_theme') || '';
+            app.innerHTML = `
+                <div class="join">
+                    <h1>FamilyConnect</h1>
+                    <p>Secure encrypted call</p>
+                    <input id="name" placeholder="Your name" value="${userId}">
+                    <button onclick="join()">Join Call</button>
+                </div>`;
+            document.getElementById('name').focus();
+        }
 
-let socket, localStream, remoteStream, peerConnection;
-let isCaller = false;
+        function join() {
+            const name = document.getElementById('name').value.trim();
+            if (!name) return;
+            userId = name;
+            localStorage.setItem('fc_user', userId);
+            if (!userTheme) {
+                userTheme = themes[Math.floor(Math.random() * themes.length)];
+                localStorage.setItem('fc_theme', userTheme);
+            }
 
-const servers = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
-  ]
-};
+            socket = io(SERVER, { transports: ['websocket','polling'] });
+            socket.on('connect', () => {
+                socket.emit('join', { userId, room: 'family', theme: userTheme });
+            });
+            socket.on('room-users', (users) => showCall(users));
+            socket.on('incoming-call', (data) => {
+                document.getElementById('status').textContent = `📞 ${data.from} is calling`;
+            });
+            socket.on('signal', handleSignal);
+        }
 
-async function init() {
-  socket = io();
-  
-  socket.on('connect', () => {
-    STATUS.textContent = 'Connected! Joining room...';
-    socket.emit('join-room', ROOM);
-  });
-  
-  socket.on('user-joined', (data) => {
-    STATUS.textContent = `${data.count} people in room. Ready to call!`;
-    CALL_BTN.disabled = false;
-    CALL_BTN.textContent = '📞 Start Call';
-    CALL_BTN.onclick = startCall;
-  });
-  
-  socket.on('ready-to-call', () => {
-    STATUS.textContent = 'Someone is here! Tap to call.';
-    CALL_BTN.disabled = false;
-    CALL_BTN.textContent = '📞 Start Call';
-    CALL_BTN.onclick = startCall;
-  });
-  
-  socket.on('offer', async (data) => {
-    isCaller = false;
-    STATUS.textContent = 'Incoming call...';
-    
-    await setupPeerConnection();
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    socket.emit('answer', { roomId: ROOM, answer });
-    
-    STATUS.textContent = 'Call connected!';
-    showVideos();
-  });
-  
-  socket.on('answer', async (data) => {
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-    STATUS.textContent = 'Call connected!';
-    showVideos();
-  });
-  
-  socket.on('ice-candidate', async (data) => {
-    try {
-      await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-    } catch (e) {
-      console.error('ICE error:', e);
-    }
-  });
-  
-  socket.on('user-left', () => {
-    STATUS.textContent = 'Other person left.';
-    endCall();
-  });
-}
+        function showCall(users) {
+            app.innerHTML = `
+                <div class="call">
+                    <div class="avatar">👤</div>
+                    <div id="status" class="status">Connected</div>
+                    <div class="timer" id="timer">00:00</div>
+                    <div class="controls">
+                        <button class="btn mute" onclick="toggleMute()">🎤</button>
+                        <button class="btn end" onclick="hangup()">🔴</button>
+                    </div>
+                </div>`;
+            startMic();
+            startTimer();
+        }
 
-async function startCall() {
-  isCaller = true;
-  STATUS.textContent = 'Starting call...';
-  CALL_BTN.disabled = true;
-  
-  await setupPeerConnection();
-  
-  const offer = await peerConnection.createOffer();
-  await peerConnection.setLocalDescription(offer);
-  socket.emit('offer', { roomId: ROOM, offer });
-  
-  STATUS.textContent = 'Calling... waiting for answer';
-}
+        async function startMic() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio:true, video:false });
+                document.getElementById('status').textContent = '✅ Mic active';
+            } catch(e) {
+                document.getElementById('status').textContent = '⚠️ Mic denied';
+            }
+        }
 
-async function setupPeerConnection() {
-  localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-  document.getElementById('localVideo').srcObject = localStream;
-  
-  peerConnection = new RTCPeerConnection(servers);
-  
-  localStream.getTracks().forEach(track => {
-    peerConnection.addTrack(track, localStream);
-  });
-  
-  peerConnection.ontrack = (event) => {
-    remoteStream = event.streams[0];
-    document.getElementById('remoteVideo').srcObject = remoteStream;
-  };
-  
-  peerConnection.onicecandidate = (event) => {
-    if (event.candidate) {
-      socket.emit('ice-candidate', { roomId: ROOM, candidate: event.candidate });
-    }
-  };
-}
+        function startTimer() {
+            callTimer = setInterval(() => {
+                seconds++;
+                const m = Math.floor(seconds/60).toString().padStart(2,'0');
+                const s = (seconds%60).toString().padStart(2,'0');
+                document.getElementById('timer').textContent = m+':'+s;
+            }, 1000);
+        }
 
-function showVideos() {
-  document.body.style.background = '#000';
-  VIDEOS.style.display = 'block';
-}
+        function toggleMute() {
+            if (!localStream) return;
+            isMuted = !isMuted;
+            localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+            document.querySelector('.mute').style.background = isMuted ? '#e94560' : '#333';
+        }
 
-function endCall() {
-  if (peerConnection) peerConnection.close();
-  if (localStream) localStream.getTracks().forEach(t => t.stop());
-  peerConnection = null;
-  localStream = null;
-  remoteStream = null;
-  VIDEOS.style.display = 'none';
-  document.body.style.background = '#1a1a2e';
-  STATUS.textContent = 'Call ended. Tap to call again.';
-  CALL_BTN.disabled = false;
-  CALL_BTN.textContent = '📞 Start Call';
-}
+        async function createPeer(target) {
+            pc = new RTCPeerConnection({ iceServers:[{ urls:'stun:stun.l.google.com:19302' }] });
+            if (localStream) {
+                localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+            }
+            pc.onicecandidate = e => {
+                if (e.candidate) socket.emit('signal', { to:target, signal:{ candidate:e.candidate } });
+            };
+            pc.ontrack = e => {
+                const audio = new Audio();
+                audio.srcObject = e.streams[0];
+                audio.autoplay = true;
+                document.body.appendChild(audio);
+            };
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socket.emit('signal', { to:target, signal:{ sdp: pc.localDescription } });
+        }
 
-init();
-</script>
+        async function handleSignal(data) {
+            if (!pc) {
+                // answer incoming call
+                await createPeer(data.from);
+                document.getElementById('status').textContent = '✅ Answered';
+                return;
+            }
+            try {
+                if (data.signal.sdp) {
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
+                    if (data.signal.sdp.type === 'offer') {
+                        const answer = await pc.createAnswer();
+                        await pc.setLocalDescription(answer);
+                        socket.emit('signal', { to:data.from, signal:{ sdp: pc.localDescription } });
+                    }
+                } else if (data.signal.candidate) {
+                    await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        function hangup() {
+            if (localStream) localStream.getTracks().forEach(t => t.stop());
+            if (pc) pc.close();
+            if (callTimer) clearInterval(callTimer);
+            seconds = 0;
+            if (socket) socket.disconnect();
+            showJoin();
+        }
+
+        showJoin();
+    </script>
 </body>
 </html>
