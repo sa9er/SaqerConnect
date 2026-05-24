@@ -20,6 +20,7 @@ const io = new Server(server, {
 
 const users = new Map();
 const messages = [];
+let audioPacketCount = 0;
 
 function broadcastRoomUsers(room) {
   const list = [];
@@ -40,6 +41,11 @@ io.on('connection', (socket) => {
     const roomMessages = messages.filter(m => m.room === room);
     socket.emit('message-history', roomMessages);
     broadcastRoomUsers(room);
+  });
+
+  socket.on('get-users', () => {
+    const user = users.get(socket.id);
+    if (user) broadcastRoomUsers(user.room);
   });
 
   socket.on('send-message', (data) => {
@@ -65,7 +71,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('call-rejected', (data) => {
-    io.to(data.to).emit('call-rejected');
+    if (data && data.to) io.to(data.to).emit('call-rejected');
   });
 
   socket.on('call-ended', () => {
@@ -77,9 +83,21 @@ io.on('connection', (socket) => {
     io.to(data.to).emit('signal', { from: socket.id, signal: data.signal });
   });
 
+  // Relay audio data with logging
   socket.on('audio-data', (data) => {
     const user = users.get(socket.id);
     if (!user) return;
+    
+    audioPacketCount++;
+    if (audioPacketCount % 100 === 0) {
+      console.log(`Audio packets relayed: ${audioPacketCount}`);
+    }
+    
+    // Log first few packets to verify format
+    if (audioPacketCount <= 5) {
+      console.log('Audio packet from', user.userId, 'type:', data.type, 'len:', data.data ? data.data.length : 'no data');
+    }
+    
     socket.to(user.room).emit('audio-data', data);
   });
 
